@@ -25,10 +25,10 @@ Args:
 3. output_file_path: output flood depth file path.
 4. parameters: a dictionary like string that contains key parameters including band number, band value and water index type. 
 - An example for planet data using all bands: "{'index':'ALL','cloud_band':[0],'cloud_value':[0]}" (include quotes).
-      - 'ALL' for index means using all input bands of image as features; 
-      - [0] for 'cloud_band' means using the first band of cloud_mask_path as the indicator of cloud or other invalid pixels;
-      - [0] for 'cloud_value' means the pixel value of 0 in the specify band is the cloud pixel (invalid pixel).
-      - If there are multiple band represent invalid area, could use something like 'cloud_band':[1,2,3...],'cloud_value':[[1,2,3,4],2,5...].
+ - 'ALL' for index means using all input bands of image as features; 
+ - [0] for 'cloud_band' means using the first band of cloud_mask_path as the indicator of cloud or other invalid pixels;
+ - [0] for 'cloud_value' means the pixel value of 0 in the specify band is the cloud pixel (invalid pixel).
+ - If there are multiple band represent invalid area, could use something like 'cloud_band':[1,2,3...],'cloud_value':[[1,2,3,4],2,5...].
 
 ### Option 2: run in python
 ```
