@@ -4,7 +4,7 @@ Generate water mask from sattliete images using sel-supervised classification.
 ## 1 Description
 1. The code automatically prepares ancillary data, including water occurrence and land cover.
 2. The kernel classification model is LogisticRegression.
-3. The sample for training the model is automatically pulling from ancillary data.
+3. The training data is automatically sampled from the ancillary data.
 
 ## 2 Requirements
 ```
