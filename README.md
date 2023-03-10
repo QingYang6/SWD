@@ -40,6 +40,6 @@ SWD(input_image_path,cloud_mask_path,output_file_path,parameters)
 ```
 Args:
 1. input_image_path,cloud_mask_path,output_file_path are the same as Option 1.
-2. parameters: similar as Option 1. Can directly input with a dicionary variable {'index':'ALL','cloud_band':[0],'cloud_value':[0]}, no need to be a string.
+2. parameters: similar as Option 1. Can directly input with a dictionary variable {'index':'ALL','cloud_band':[0],'cloud_value':[0]}, no need to be a string.
 
 
