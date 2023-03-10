@@ -1,7 +1,26 @@
+"""
+Generate water mask based on sel-supervised classification.
+    1.The code automatically prepares ancillary data, including water occurrence and land cover.
+    2.The kernel classification model is LogisticRegression.
+    3.The sample for training the model is automatically pulling from ancillary data.
+Created by Qing Yang, email: yang2473@uwm.edu
+Usage:
+python -u ./SWD.py input_image_path cloud_mask_path output_file_path parameters
+Args:
+    input_image_path: input image file path, could be any satellite image with CRS defined.
+    cloud_mask_path: cloud maks or unuse data mask, contain invlid pixel mask such as cloud, cloud shadow, snow, missing value, etc. Should be in the same geoextent as the input_image_path. Set to None if such mask is not applicable.
+    output_file_path: output flood depth file path.
+    parameters: a dictionary variable that contains key parameters including band number, band value and water index type. 
+    An example for planet data using all bands: "{'index':'ALL','cloud_band':[0],'cloud_value':[0]}". 
+    'ALL' for index means using all input bands of image as features; 
+    [0] for 'cloud_band' means using the first band of cloud_mask_path as the indicator of cloud or other invalid pixels;
+    [0] for 'cloud_value' means the pixel value of 0 in the specify band is the cloud pixel (invalid pixel).
+    If there are multiple band represent invalid area, could use something like 'cloud_band':[1,2,3...],'cloud_value':[[1,2,3,4],2,5...]
+"""
 import os
 import glob
 import sys
-import argparse
+import ast
 import rasterio
 from rasterio.warp import reproject, Resampling, transform_bounds, calculate_default_transform
 import numpy as np
@@ -13,9 +32,9 @@ from ancillarydata import *
 import dask
 import dask.array as da
 from sklearn.metrics import f1_score
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegressionCV
 from dask_ml.wrappers import ParallelPostFit
+#from sklearn.svm import SVC
 
 class input_data:
     def __init__(self, masktif:str, refbounds=None):
@@ -46,11 +65,11 @@ class input_data:
                     self.ref = mergelist(dirlist)
         else:
             raise ValueError(f"Input {masktif} not valid!")
+        #if not is_wgs84(self.ref):
+        #    self.ref = reproject_to_wgs84(self.ref)
         if refbounds is not None:
             inputbounds = [float(i) for i in refbounds.split(',')]
-            self.ref = cropfile(self.ref, inputbounds)
-        if not is_wgs84(self.ref):
-            self.ref = reproject_to_wgs84(self.ref)
+            self.ref = cropfile_oriproject(self.ref, inputbounds)
 
     def read(self):
         with rasterio.open(self.ref) as src:
@@ -103,8 +122,13 @@ def read_todask(filepath):
 def cloud_mask(in_ras,info_dict):
     cloud_band = info_dict['cloud_band']
     cloud_values = info_dict['cloud_value']
-    bool_exprs = [in_ras[bn,:,:] == cloud_values[i] for i, bn in enumerate(cloud_band)]
-    if len(cloud_band)==1:
+    bool_exprs = []
+    for i, bn in enumerate(cloud_band):
+        if isinstance(cloud_values[i], list):
+            bool_exprs.append(np.in1d(in_ras[bn,:,:], cloud_values[i]).reshape(in_ras.shape[1:]))
+        else:
+            bool_exprs.append(in_ras[bn,:,:] == cloud_values[i])
+    if len(bool_exprs) == 1:
         cloud_mask = bool_exprs[0]
     else:
         cloud_mask = da.logical_or(*bool_exprs)
@@ -161,35 +185,43 @@ def write_output(out_file, result, profile):
     print(f"Out file: {out_file}")
 
     
-def SWD(input_optical,input_cloud,outputfile,geoextent=None): 
+def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None): 
+    if isinstance(info_dict, str):
+        info_dict = ast.literal_eval(info_dict)
+    print(info_dict)
     tqdm.monitor_interval = 0  # Default is 1000 ms, but we want to update more frequently
-    info_dict = {'index':'ALL', 'green': 1, 'swir': 3,'cloud_band': [0], 'cloud_value': [0]}
+    #info_dict = {'index':'ALL','green': 1,'swir': 3,'cloud_band':[0],'cloud_value':[0]}
     os.makedirs(os.path.dirname(outputfile),exist_ok=True)
-    with tqdm(total=9, desc='Data input and ancillary preparing') as pbar:
+    if input_cloud=='None':
+        data_image = input_data(input_optical, geoextent)
+    else:
         data_image = dask.delayed(input_data)(input_optical, geoextent)
         data_cloud = dask.delayed(input_data)(input_cloud, geoextent)
         data_image, data_cloud = dask.compute(data_image, data_cloud)
-        pbar.update(1)
-
-        bounds_wgs84 = data_image.bounds()
-        print(bounds_wgs84)
-        ref_src = data_image.src().meta.copy()
-        pbar.update(1)
-
-        rc_wop = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getWO')
-        rc_gplcc = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getGPLCC')
-        rc_wop, rc_gplcc = dask.compute(rc_wop, rc_gplcc)
-        pbar.update(1)
-
+    #get bounds of input image, in wgs84
+    bounds_wgs84 = data_image.bounds()
+    print(f'Working extent: {bounds_wgs84}')
+    ref_src = data_image.src().meta.copy()
+    #prepare ancillary data
+    print(f'Preparing ancillary data')
+    rc_wop = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getWO')
+    rc_gplcc = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getGPLCC')
+    rc_wop, rc_gplcc = dask.compute(rc_wop, rc_gplcc)
+    #prepare sample
+    with tqdm(total=8, desc='Sample generating...') as pbar:
         arr_image = read_todask(data_image.ref)
-        arr_cloud = read_todask(data_cloud.ref)
+        if input_cloud != 'None':
+            arr_cloud = read_todask(data_cloud.ref)
         pbar.update(1)
 
         WI = get_waterindex(arr_image, info_dict)
         pbar.update(1)
 
-        CM = cloud_mask(arr_cloud,info_dict).squeeze()
-        non_valid_mask = da.logical_or(CM,da.where(np.isnan(WI[0,:,:]),True,False)) # ???
+        if input_cloud != 'None':
+            CM = cloud_mask(arr_cloud,info_dict).squeeze()
+        else:
+            CM = da.where(WI[0,:,:]==0,False,False)
+        non_valid_mask = da.logical_or(CM,da.where(arr_image[0,:,:]==ref_src['nodata'],True,False))
         pbar.update(1)
 
         LCC_raw = read_todask(rc_gplcc).squeeze()
@@ -198,50 +230,39 @@ def SWD(input_optical,input_cloud,outputfile,geoextent=None):
         wop_raw = da.where(non_valid_mask,0,wop_raw)
         pbar.update(1)
 
-        PW = da.where(wop_raw>=50,1,0)
+        PW = da.where(wop_raw>=50,1,0)#some how import, but the optimal is mysterious.
         num_PW = da.count_nonzero(PW==1).compute()
+        if num_PW<=1:
+            raise ValueError(f"Not enough persistent water in the image")
         pbar.update(1)
         PW_buffer = ndimage.binary_dilation(PW, iterations=int(np.sqrt(num_PW//1e3+1)//2), structure = ndimage.generate_binary_structure(2, 2))
-        pbar.update(1)
-
         LCC = da.where(PW_buffer==1,0,LCC_raw)
         pbar.update(1)
 
-    print('get_sample')
-    NW_indices = get_random_pixels(LCC.compute(), [10, 20, 30, 40, 80, 90], max(int(np.ceil(num_PW/1e2)),1000)) #for GP LCC
-    PW_indices = get_random_pixels(PW.compute(), [1], len(NW_indices))
-    Total_Sample_indices = NW_indices + PW_indices
-    targets = da.concatenate([da.zeros(len(NW_indices)), da.ones(len(PW_indices))]) 
-    In_features = WI.compute()[:,np.array(Total_Sample_indices)[:, 0], np.array(Total_Sample_indices)[:, 1]].T
-    In_features = da.from_array(In_features,chunks='auto')
-    #Total_Sample_indices[0], Total_Sample_indices[1]
+        NW_indices = get_random_pixels(LCC.compute(), [10, 20, 30, 40, 80, 90], min(int(np.ceil(num_PW/25)),2e5)) #for GP LCC
+        PW_indices = get_random_pixels(PW.compute(), [1], len(NW_indices))
+        Total_Sample_indices = NW_indices + PW_indices
+        pbar.update(1)
+        targets = da.concatenate([da.zeros(len(NW_indices)), da.ones(len(PW_indices))]) 
+        In_features = WI.compute()[:,np.array(Total_Sample_indices)[:, 0], np.array(Total_Sample_indices)[:, 1]].T
+        In_features = da.from_array(In_features,chunks='auto')
+        pbar.update(1)
+    print(f'Total sample size: {len(targets)}')
     #ML method, RF, could also use something like grid search.
     clf = ParallelPostFit(LogisticRegressionCV(cv=5), scoring="accuracy")
+    #clf = ParallelPostFit(SVC(kernel='rbf', C=1.0, random_state=0), scoring="accuracy")
     clf.fit(In_features, targets)
-    clf.score(In_features, targets)
-    #rf = RandomForestClassifier(n_estimators=50,max_depth=10,verbose=1)
-    #rf.fit(In_features, targets)
-    # Generate the pixel coordinates as an array of shape (2, num_pixels)
-    #pixel_coords = da.indices(WI.shape[1:]).reshape(2, -1)
-    # Get the values of the selected pixels for all bands
-    #values = WI.compute()[:, pixel_coords[0], pixel_coords[1]].T
-    # find the optimal threshold
-    #optimal_threshold = find_optimal_threshold(In_features, targets)
-    #print(optimal_threshold.compute())
-    #predicted_mask = da.where(WI>optimal_threshold,1,0)
+    print(f'Fitting score: {clf.score(In_features, targets)}')
     #import pdb; pdb.set_trace()
     values = da.reshape(WI,(WI.shape[0],-1)).T
-    #values = da.from_array(values,chunks='auto')
-    # Define a function to apply clf.predict to each block of the dask.array
-    #def predict_block(block):
-    #    return rf.predict(block)
-    predictions = clf.predict(X_large)
-    import pdb; pdb.set_trace()
-    # Make predictions for the values
-    #predictions = values.map_blocks(predict_block, dtype=np.int8)
-    #predictions = rf.predict(values)
+    #prediction
+    print(f'Water body detecting...')
+    predictions = clf.predict(values)
     # Reshape the predicted target variable to match the shape of the `values_arr` mask
     predicted_mask = da.reshape(predictions, (1,WI.shape[1],WI.shape[2]))
     ref_src.update(dtype=rasterio.uint8, nodata=255, count=1)
-    predicted_mask_write = da.where(non_valid_mask, predicted_mask, ref_src['nodata']).astype(ref_src['dtype'])
+    predicted_mask_write = da.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
     write_output(outputfile, predicted_mask_write, ref_src)
+
+if __name__ == "__main__":
+    SWD(*sys.argv[1:])

@@ -44,7 +44,7 @@ def reproject_clip(in_ras, ref):
     """
     with rasterio.open(in_ras) as src:
         in_ras_matrix = src.read(1)
-        ref.update({'dtype': src.dtypes[0], 'count': src.count})
+        ref.update({'dtype': src.dtypes[0], 'count': src.count, 'nodata':src.nodata})
         out_mem = MemoryFile()
         with out_mem.open(**ref) as dst:
             for i in range(1, src.count + 1):
@@ -92,6 +92,30 @@ def cropfile(input_file,bounds):
     with rasterio.open(out_mem, "w", **out_meta) as dest:
         dest.write(out_image)
     # Rewind the MemoryFile pointer to the beginning
+    out_mem.seek(0)
+    return out_mem
+
+def cropfile_oriproject(input_file,bounds):
+    # open the raster file
+    with rasterio.open(input_file) as src:
+        left, bottom, right, top = bounds
+        # transform the WGS84 bounds to the raster's coordinate system
+        left, bottom, right, top = transform_bounds('EPSG:4326', src.crs, left, bottom, right, top)
+        # read the raster data within the given bounds
+        window = src.window(left, bottom, right, top)
+        data = src.read(window=window)
+        # create a new profile for the cropped raster
+        profile = src.profile.copy()
+        profile.update({
+            'height': data.shape[1],
+            'width': data.shape[2],
+            'transform': src.window_transform(window)
+        })
+        # write the cropped raster to a memory file
+    out_mem = MemoryFile()
+    with rasterio.open(out_mem, "w", **profile) as dest:
+        dest.write(data)
+    # read the contents of the memory file into a bytes object
     out_mem.seek(0)
     return out_mem
 
