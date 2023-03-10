@@ -17,7 +17,7 @@ conda install dask-ml gdal rasterio shapely matplotlib scipy pandas tqdm jupyter
 Clone or download this repository then:
 ### Option 1: run in terminal
 ```
-python -u ./SWD.py input_image_path cloud_mask_path output_file_path parameters
+python -u PATH_TO_SWD_FOLDER/SWD.py input_image_path cloud_mask_path output_file_path parameters
 ```
 Args:
 1. input_image_path: input image file path, could be any satellite image with CRS defined.
