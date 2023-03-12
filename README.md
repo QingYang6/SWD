@@ -1,5 +1,7 @@
+## Updated: Improving ancillary data fecthing, 03/11/23.
+
 # SWD: Self-supervised Waterbody Detection
-Generate water mask from sattliete images using sel-supervised classification.
+Generate water mask from sattliete images using self-supervised classification.
 
 ## 1 Description
 1. The code automatically prepares ancillary data, including water occurrence and land cover.
