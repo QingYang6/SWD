@@ -146,3 +146,26 @@ def reproject_to_wgs84(tif_path):
                     dst_crs='EPSG:4326',
                     resampling=Resampling.nearest)
     return out_mem
+
+def reproject_clip_readsrc(in_rasfile,ref):
+    with rasterio.open(in_rasfile) as src:
+        in_ras = src.read()
+        src_meta = src.meta.copy()
+        out_arr = reproject_clip_direct(in_ras,src_meta,ref)
+    return out_arr
+
+def reproject_clip_direct(in_ras,src,ref):
+    dest_shape = (src['count'], ref['height'], ref['width'])
+    out_arr = np.zeros(dest_shape, dtype = src['dtype'])
+    rasterio.warp.reproject(
+        source=in_ras,
+        destination=out_arr,
+        src_transform=src['transform'],
+        src_crs=src['crs'],
+        dst_transform=ref['transform'],
+        dst_crs=ref['crs'],
+        resampling=rasterio.warp.Resampling.nearest,
+        src_nodata=src['nodata'],
+        dst_nodata=src['nodata'],
+        )
+    return out_arr

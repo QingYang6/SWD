@@ -94,10 +94,13 @@ class input_data:
 def get_ancillary(bounds_wgs84, ref_src ,func_name):
     # Call the function specified by func_name with bounds_wgs84 as input
     data_list = globals()[func_name](bounds_wgs84)
+    data = [dask.delayed(reproject_clip_readsrc)(url,ref_src) for url in data_list]
+    results = dask.compute(*data)
+    rc_data = da.nanmax(da.stack(results, axis=0),axis=0).squeeze()
     # Merge the data in the list
-    merged_data = mergelist(data_list)
+    #merged_data = mergelist(data_list)
     # Reproject and clip the merged data
-    rc_data = reproject_clip(merged_data,ref_src)
+    #rc_data = reproject_clip(merged_data,ref_src)
     # Return the processed data
     return rc_data
 
@@ -206,7 +209,7 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None):
     print(f'Preparing ancillary data')
     rc_wop = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getWO')
     rc_gplcc = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getGPLCC')
-    rc_wop, rc_gplcc = dask.compute(rc_wop, rc_gplcc)
+    wop_raw, LCC_raw = dask.compute(rc_wop, rc_gplcc)
     #prepare sample
     with tqdm(total=8, desc='Sample generating...') as pbar:
         arr_image = read_todask(data_image.ref)
@@ -224,8 +227,8 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None):
         non_valid_mask = da.logical_or(CM,da.where(arr_image[0,:,:]==ref_src['nodata'],True,False))
         pbar.update(1)
 
-        LCC_raw = read_todask(rc_gplcc).squeeze()
-        wop_raw = read_todask(rc_wop).squeeze()
+        #LCC_raw = read_todask(rc_gplcc).squeeze()
+        #wop_raw = read_todask(rc_wop).squeeze()
         LCC_raw = da.where(non_valid_mask,0,LCC_raw)
         wop_raw = da.where(non_valid_mask,0,wop_raw)
         pbar.update(1)
@@ -239,7 +242,7 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None):
         LCC = da.where(PW_buffer==1,0,LCC_raw)
         pbar.update(1)
 
-        NW_indices = get_random_pixels(LCC.compute(), [10, 20, 30, 40, 80, 90], min(int(np.ceil(num_PW/25)),2e5)) #for GP LCC
+        NW_indices = get_random_pixels(LCC.compute(), [10, 20, 30, 40, 80, 90], int(min(int(np.ceil(num_PW/25)),3e5))) #for GP LCC
         PW_indices = get_random_pixels(PW.compute(), [1], len(NW_indices))
         Total_Sample_indices = NW_indices + PW_indices
         pbar.update(1)
@@ -259,7 +262,8 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None):
     print(f'Water body detecting...')
     predictions = clf.predict(values)
     # Reshape the predicted target variable to match the shape of the `values_arr` mask
-    predicted_mask = da.reshape(predictions, (1,WI.shape[1],WI.shape[2]))
+    with dask.config.set(**{'array.slicing.split_large_chunks': False}):
+        predicted_mask = da.reshape(predictions, (1,WI.shape[1],WI.shape[2]))
     ref_src.update(dtype=rasterio.uint8, nodata=255, count=1)
     predicted_mask_write = da.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
     write_output(outputfile, predicted_mask_write, ref_src)
