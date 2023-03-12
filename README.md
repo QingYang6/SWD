@@ -1,4 +1,4 @@
-### Updated: Improving ancillary data fecthing, 03/11/23.
+### Updated: Improved ancillary data fecthing, 03/11/23.
 
 # SWD: Self-supervised Waterbody Detection
 Generate water mask from sattliete images using self-supervised classification.
