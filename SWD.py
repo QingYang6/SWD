@@ -183,7 +183,7 @@ def find_optimal_threshold(feature, y_true):
     return optimal_threshold
 
 def write_output(out_file, result, profile):
-    with rasterio.open(out_file, 'w', **profile) as dst:
+    with rasterio.open(out_file, 'w', **profile, compress='deflate') as dst:
         dst.write(result)
     print(f"Out file: {out_file}")
 
