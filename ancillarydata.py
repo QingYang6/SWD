@@ -80,11 +80,46 @@ def getWO(bounds:tuple) -> list:
 
 def getGPLCC(bounds:tuple) -> list:
     """
+    Get the intersect copernicus glo30 data file list based on bounds and offical geojson
+    """
+    s3_url_prefix = "https://esa-worldcover.s3.eu-central-1.amazonaws.com"
+    # Open the geojson file
+    DEM_GEOJSON = f'{s3_url_prefix}/v100/2020/esa_worldcover_2020_grid.geojson'
+    dataSource = ogr.Open(DEM_GEOJSON)
+    layer = dataSource.GetLayer()
+    # Create an OGR geometry object from the bounds
+    # Create an empty polygon
+    extent_geom = ogr.Geometry(ogr.wkbPolygon)
+    # Add the vertices of the bounding box
+    ring = ogr.Geometry(ogr.wkbLinearRing)
+    ring.AddPoint(bounds[0], bounds[1])
+    ring.AddPoint(bounds[2], bounds[1])
+    ring.AddPoint(bounds[2], bounds[3])
+    ring.AddPoint(bounds[0], bounds[3])
+    ring.AddPoint(bounds[0], bounds[1])
+    extent_geom.AddGeometry(ring)
+    # Loop over features and find intersecting features
+    elements = []
+    for feature in layer:
+        geom = feature.GetGeometryRef()
+        if extent_geom.Intersects(geom):
+            tile = feature.GetField('ll_tile')
+            file_path = f"{s3_url_prefix}/v100/2020/map/ESA_WorldCover_10m_2020_v100_{tile}_Map.tif"
+            print(file_path)
+            elements.append(file_path)
+    # Close the data source
+    dataSource = None
+    return elements
+
+def getGPLCC_ori(bounds:tuple) -> list:
+    """
     Get land cover data from GongPeng LCC, based on the geobounds of reference tif or src.
     Resample and clip with rasterio.
     Returns
     -------
         list of webfiles
+    Update, 05032023
+    tsinghua.edu.cn is closed, use ESA world cover instead.
     """
     Hcrop_Ex = bounds
     LCCmainURL = "http://data.ess.tsinghua.edu.cn/data/fromglc10_2017v01/fromglc10v01"

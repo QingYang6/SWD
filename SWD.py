@@ -242,7 +242,8 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None):
         LCC = da.where(PW_buffer==1,0,LCC_raw)
         pbar.update(1)
 
-        NW_indices = get_random_pixels(LCC.compute(), [10, 20, 30, 40, 80, 90], int(min(int(np.ceil(num_PW/25)),3e5))) #for GP LCC
+        #NW_indices = get_random_pixels(LCC.compute(), [10, 20, 30, 40, 80, 90], int(min(int(np.ceil(num_PW/25)),3e5))) #for GP LCC
+        NW_indices = get_random_pixels(LCC.compute(), [10, 20, 30, 40, 50, 60, 100], int(min(int(np.ceil(num_PW/25)),3e5))) #for ESA world cover
         PW_indices = get_random_pixels(PW.compute(), [1], len(NW_indices))
         Total_Sample_indices = NW_indices + PW_indices
         pbar.update(1)
