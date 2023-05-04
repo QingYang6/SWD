@@ -1,3 +1,4 @@
+### Updated: Pulling land cover data from ESA WorldCover V100 2020, 05/04/23.
 ### Updated: Improved ancillary data fecthing, 03/11/23.
 
 # SWD: Self-supervised Waterbody Detection
