@@ -35,6 +35,8 @@ from sklearn.metrics import f1_score
 from sklearn.linear_model import LogisticRegressionCV
 from dask_ml.wrappers import ParallelPostFit
 #from sklearn.svm import SVC
+import warnings
+warnings.filterwarnings("ignore")
 
 class input_data:
     def __init__(self, masktif:str, refbounds=None):
@@ -137,12 +139,26 @@ def cloud_mask(in_ras,info_dict):
         cloud_mask = da.logical_or(*bool_exprs)
     return cloud_mask
 
-def MNDWI(in_ras,info_dict):
+def MNDWI(in_ras,info_dict=None):
     info_dict = {'green': 1, 'swir': 3}
     '''for Planet'''
     MNDWI = (in_ras[info_dict['green'],:,:]-in_ras[info_dict['swir'],:,:]) / \
     (in_ras[info_dict['green'],:,:]+in_ras[info_dict['swir'],:,:])
     return MNDWI
+
+def NDVI(in_ras,info_dict=None):
+    info_dict = {'NIR': 3, 'Red': 0}
+    '''for Planet'''
+    NDVI = (in_ras[info_dict['NIR'],:,:]-in_ras[info_dict['Red'],:,:]) / \
+    (in_ras[info_dict['NIR'],:,:]+in_ras[info_dict['Red'],:,:])
+    return NDVI
+
+def EVI(in_ras,info_dict=None):
+    info_dict = {'NIR': 3, 'Red': 0, 'Blue': 2}
+    '''for Planet'''
+    EVI = 2.5 * (in_ras[info_dict['NIR'],:,:]-in_ras[info_dict['Red'],:,:]) / \
+    (in_ras[info_dict['NIR'],:,:] + 6 * in_ras[info_dict['Red'],:,:] - 7.5 * in_ras[info_dict['Blue'],:,:] + 1)
+    return EVI
 
 def ALL(in_ras,info_dict):
     return in_ras
@@ -186,9 +202,9 @@ def write_output(out_file, result, profile):
     with rasterio.open(out_file, 'w', **profile, compress='deflate') as dst:
         dst.write(result)
     print(f"Out file: {out_file}")
-
     
 def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None): 
+    geoextent=None
     if isinstance(info_dict, str):
         info_dict = ast.literal_eval(info_dict)
     print(info_dict)
@@ -269,5 +285,56 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None):
     predicted_mask_write = da.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
     write_output(outputfile, predicted_mask_write, ref_src)
 
+def RWC(input_optical,input_cloud,outputfile,info_dict,geoextent=None): 
+    geoextent=None
+    if isinstance(info_dict, str):
+        info_dict = ast.literal_eval(info_dict)
+    print(info_dict)
+    tqdm.monitor_interval = 0  # Default is 1000 ms, but we want to update more frequently
+    #info_dict = {'index':'ALL','green': 1,'swir': 3,'cloud_band':[0],'cloud_value':[0]}
+    os.makedirs(os.path.dirname(outputfile),exist_ok=True)
+    if input_cloud=='None':
+        data_image = input_data(input_optical, geoextent)
+    else:
+        data_image = dask.delayed(input_data)(input_optical, geoextent)
+        data_cloud = dask.delayed(input_data)(input_cloud, geoextent)
+        data_image, data_cloud = dask.compute(data_image, data_cloud)
+    #get bounds of input image, in wgs84
+    bounds_wgs84 = data_image.bounds()
+    print(f'Working extent: {bounds_wgs84}')
+    ref_src = data_image.src().meta.copy()
+    #get indices
+    arr_image = read_todask(data_image.ref)
+    mndwi = MNDWI(arr_image)
+    ndvi = NDVI(arr_image)
+    evi = EVI(arr_image)
+    if input_cloud != 'None':
+        arr_cloud = read_todask(data_cloud.ref)
+    if input_cloud != 'None':
+        CM = cloud_mask(arr_cloud,info_dict).squeeze()
+    else:
+        CM = da.where(mndwi[0,:,:]==0,False,False)
+    non_valid_mask = da.logical_or(CM,da.where(arr_image[0,:,:]==ref_src['nodata'],True,False))
+    predicted_mask = da.where((mndwi < ndvi) | ((mndwi < evi) & (evi < 0.1)), 1, 0)
+    ref_src.update(dtype=rasterio.uint8, nodata=255, count=1)
+    predicted_mask_write = da.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
+    predicted_mask_write = da.expand_dims(predicted_mask_write, axis=0)
+    write_output(outputfile, predicted_mask_write, ref_src)
+    predict_mndwi = da.where(non_valid_mask, np.nan, mndwi).astype('float16')
+    ref_src.update(dtype=rasterio.float32, nodata=np.nan, count=1)
+    outputfile_mndwi = outputfile.replace('.tif','_mndwi.tif')
+    predict_mndwi = da.expand_dims(predict_mndwi, axis=0)
+    write_output(outputfile_mndwi, predict_mndwi, ref_src)
+
 if __name__ == "__main__":
-    SWD(*sys.argv[1:])
+    # Get the number of input arguments (excluding the script name)
+    num_inputs = len(sys.argv) - 1
+    # Get the last input argument
+    if num_inputs > 4:
+        run_type = sys.argv[-1]
+    else:
+        run_type = None
+    if run_type == 'SWD' or run_type is None:
+        SWD(*sys.argv[1:])
+    else:
+        RWC(*sys.argv[1:])
