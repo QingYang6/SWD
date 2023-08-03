@@ -233,7 +233,7 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None):
         wop_raw = da.where(non_valid_mask,0,wop_raw)
         pbar.update(1)
 
-        PW = da.where(wop_raw>=50,1,0)#some how import, but the optimal is mysterious.
+        PW = da.where(wop_raw>=90,1,0)#some how import, but the optimal is mysterious.
         num_PW = da.count_nonzero(PW==1).compute()
         if num_PW<=1:
             raise ValueError(f"Not enough persistent water in the image")
