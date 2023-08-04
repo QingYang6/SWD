@@ -1,3 +1,19 @@
+### Updated: Enable input of the persistent water threshold, 08/04/23.
+To specify the persistent water threshold, please refer to the following template:
+```
+python -u SWD.py /shared/stormcenter/Qing_Y/quick_functions/data/Planet_SWD/raw_data/Xinjiang_06042017_psscene_analytic_sr_udm2/files/2017-06-04_strip_531157_composite.tif \
+/shared/stormcenter/Qing_Y/quick_functions/data/Planet_SWD/raw_data/Xinjiang_06042017_psscene_analytic_sr_udm2/files/2017-06-04_strip_531157_composite_udm2.tif \
+/shared/stormcenter/Qing_Y/quick_functions/data/Planet_SWD/OUTPUT_define_PW/Xinjiang_06042017_psscene_analytic_sr_udm2/2017-06-04_strip_531157_composite_pw50.tif \
+"{'index':'ALL','cloud_band':[0],'cloud_value':[0]}" 50
+```
+The last number (fifth parameter) 50 is the persistent water threshold. The default value is 75 if not specified.
+
+The switch for RWC mode is push to the six parameter, like:
+
+```
+python -u SWD.py input_optical_bands input_cloud_mask output_water_mask parameters persistent_water_threshold RWC
+```
+
 ### Updated: Adding new fix relative threshold based on [(mNDWI < NDVI or mNDWI < EVI) and (EVI < 0.1)], 08/03/23.
 To use the new fix relative threshold, please refer to the following template:
 ```

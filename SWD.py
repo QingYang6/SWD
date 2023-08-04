@@ -205,6 +205,8 @@ def write_output(out_file, result, profile):
     
 def SWD(input_optical,input_cloud,outputfile,info_dict,PW_threshold=75,geoextent=None): 
     geoextent=None
+    if isinstance(PW_threshold, str):
+        PW_threshold = int(PW_threshold)
     if isinstance(info_dict, str):
         info_dict = ast.literal_eval(info_dict)
     print(info_dict)
@@ -334,10 +336,6 @@ if __name__ == "__main__":
         run_type = sys.argv[-1]
     else:
         run_type = None
-    if num_inputs > 4:
-        PW_threshold = sys.argv[4]
-    else:
-        PW_threshold = 75
     if run_type == 'SWD' or run_type is None:
         SWD(*sys.argv[1:])
     else:
