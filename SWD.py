@@ -203,7 +203,7 @@ def write_output(out_file, result, profile):
         dst.write(result)
     print(f"Out file: {out_file}")
     
-def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None): 
+def SWD(input_optical,input_cloud,outputfile,info_dict,PW_threshold=75,geoextent=None): 
     geoextent=None
     if isinstance(info_dict, str):
         info_dict = ast.literal_eval(info_dict)
@@ -249,7 +249,7 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None):
         wop_raw = da.where(non_valid_mask,0,wop_raw)
         pbar.update(1)
 
-        PW = da.where(wop_raw>=90,1,0)#some how import, but the optimal is mysterious.
+        PW = da.where(wop_raw>=PW_threshold,1,0)#some how import, but the optimal is mysterious.
         num_PW = da.count_nonzero(PW==1).compute()
         if num_PW<=1:
             raise ValueError(f"Not enough persistent water in the image")
@@ -285,7 +285,7 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,geoextent=None):
     predicted_mask_write = da.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
     write_output(outputfile, predicted_mask_write, ref_src)
 
-def RWC(input_optical,input_cloud,outputfile,info_dict,geoextent=None): 
+def RWC(input_optical,input_cloud,outputfile,info_dict,PW_threshold=75,geoextent=None): 
     geoextent=None
     if isinstance(info_dict, str):
         info_dict = ast.literal_eval(info_dict)
@@ -330,10 +330,14 @@ if __name__ == "__main__":
     # Get the number of input arguments (excluding the script name)
     num_inputs = len(sys.argv) - 1
     # Get the last input argument
-    if num_inputs > 4:
+    if num_inputs > 5:
         run_type = sys.argv[-1]
     else:
         run_type = None
+    if num_inputs > 4:
+        PW_threshold = sys.argv[4]
+    else:
+        PW_threshold = 75
     if run_type == 'SWD' or run_type is None:
         SWD(*sys.argv[1:])
     else:
