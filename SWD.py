@@ -287,6 +287,103 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,PW_threshold=75,geoextent
     predicted_mask_write = da.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
     write_output(outputfile, predicted_mask_write, ref_src)
 
+def SWD_RWC(input_optical,input_cloud,outputfile,info_dict,PW_threshold=50,geoextent=None): 
+    geoextent=None
+    if isinstance(PW_threshold, str):
+        PW_threshold = int(PW_threshold)
+    if isinstance(info_dict, str):
+        info_dict = ast.literal_eval(info_dict)
+    print(info_dict)
+    tqdm.monitor_interval = 0  # Default is 1000 ms, but we want to update more frequently
+    #info_dict = {'index':'ALL','green': 1,'swir': 3,'cloud_band':[0],'cloud_value':[0]}
+    os.makedirs(os.path.dirname(outputfile),exist_ok=True)
+    if input_cloud=='None':
+        data_image = input_data(input_optical, geoextent)
+    else:
+        data_image = dask.delayed(input_data)(input_optical, geoextent)
+        data_cloud = dask.delayed(input_data)(input_cloud, geoextent)
+        data_image, data_cloud = dask.compute(data_image, data_cloud)
+    #get bounds of input image, in wgs84
+    bounds_wgs84 = data_image.bounds()
+    print(f'Working extent: {bounds_wgs84}')
+    ref_src = data_image.src().meta.copy()
+    #prepare ancillary data
+    print(f'Preparing ancillary data')
+    rc_wop = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getWO')
+    rc_gplcc = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getGPLCC')
+    wop_raw, LCC_raw = dask.compute(rc_wop, rc_gplcc)
+    #prepare sample
+    with tqdm(total=8, desc='Sample generating...') as pbar:
+        arr_image = read_todask(data_image.ref)
+        if input_cloud != 'None':
+            arr_cloud = read_todask(data_cloud.ref)
+        pbar.update(1)
+
+        WI = get_waterindex(arr_image, info_dict)
+        pbar.update(1)
+
+        if input_cloud != 'None':
+            CM = cloud_mask(arr_cloud,info_dict).squeeze()
+        else:
+            CM = da.where(WI[0,:,:]==0,False,False)
+        non_valid_mask = da.logical_or(CM,da.where(arr_image[0,:,:]==ref_src['nodata'],True,False))
+        pbar.update(1)
+
+        #LCC_raw = read_todask(rc_gplcc).squeeze()
+        #wop_raw = read_todask(rc_wop).squeeze()
+        LCC_raw = da.where(non_valid_mask,0,LCC_raw)
+        wop_raw = da.where(non_valid_mask,0,wop_raw)
+        pbar.update(1)
+
+        PW = da.where(wop_raw>=PW_threshold,1,0)#some how import, but the optimal is mysterious.
+        mndwi = MNDWI(arr_image)
+        ndvi = NDVI(arr_image)
+        evi = EVI(arr_image)
+        Mask_less = da.where((mndwi < ndvi) | ((mndwi < evi) & (evi < 0.1)), 1, 0)
+        Mask_large = da.where((mndwi > ndvi) | ((mndwi > evi) & (evi < 0.1)), 1, 0)
+        intersection_less = da.logical_and(Mask_less, PW)
+        intersection_large = da.logical_and(Mask_large, PW)
+        ilc = da.sum(intersection_less)
+        ill = da.sum(intersection_large)
+        if ill>=ilc:
+            PW = da.where(Mask_large==1,1,0)
+        else:
+            PW = da.where(Mask_less==1,1,0)
+        num_PW = da.count_nonzero(PW==1).compute()
+        if num_PW<=1:
+            raise ValueError(f"Not enough persistent water in the image")
+        pbar.update(1)
+        PW_buffer = ndimage.binary_dilation(PW, iterations=int(np.sqrt(num_PW//1e3+1)//2), structure = ndimage.generate_binary_structure(2, 2))
+        LCC = da.where(PW_buffer==1,0,LCC_raw)
+        pbar.update(1)
+
+        #NW_indices = get_random_pixels(LCC.compute(), [10, 20, 30, 40, 80, 90], int(min(int(np.ceil(num_PW/25)),3e5))) #for GP LCC
+        NW_indices = get_random_pixels(LCC.compute(), [10, 20, 30, 40, 50, 60, 100], int(min(int(np.ceil(num_PW/25)),3e5))) #for ESA world cover
+        PW_indices = get_random_pixels(PW.compute(), [1], len(NW_indices))
+        Total_Sample_indices = NW_indices + PW_indices
+        pbar.update(1)
+        targets = da.concatenate([da.zeros(len(NW_indices)), da.ones(len(PW_indices))]) 
+        In_features = WI.compute()[:,np.array(Total_Sample_indices)[:, 0], np.array(Total_Sample_indices)[:, 1]].T
+        In_features = da.from_array(In_features,chunks='auto')
+        pbar.update(1)
+    print(f'Total sample size: {len(targets)}')
+    #ML method, RF, could also use something like grid search.
+    clf = ParallelPostFit(LogisticRegressionCV(cv=5), scoring="accuracy")
+    #clf = ParallelPostFit(SVC(kernel='rbf', C=1.0, random_state=0), scoring="accuracy")
+    clf.fit(In_features, targets)
+    print(f'Fitting score: {clf.score(In_features, targets)}')
+    #import pdb; pdb.set_trace()
+    values = da.reshape(WI,(WI.shape[0],-1)).T
+    #prediction
+    print(f'Water body detecting...')
+    predictions = clf.predict(values)
+    # Reshape the predicted target variable to match the shape of the `values_arr` mask
+    with dask.config.set(**{'array.slicing.split_large_chunks': False}):
+        predicted_mask = da.reshape(predictions, (1,WI.shape[1],WI.shape[2]))
+    ref_src.update(dtype=rasterio.uint8, nodata=255, count=1)
+    predicted_mask_write = da.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
+    write_output(outputfile, predicted_mask_write, ref_src)
+
 def RWC(input_optical,input_cloud,outputfile,info_dict,PW_threshold=75,geoextent=None): 
     geoextent=None
     if isinstance(info_dict, str):
@@ -310,14 +407,31 @@ def RWC(input_optical,input_cloud,outputfile,info_dict,PW_threshold=75,geoextent
     mndwi = MNDWI(arr_image)
     ndvi = NDVI(arr_image)
     evi = EVI(arr_image)
+    rc_wop = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getWO')
+    wop_raw = dask.compute(rc_wop)
     if input_cloud != 'None':
         arr_cloud = read_todask(data_cloud.ref)
     if input_cloud != 'None':
         CM = cloud_mask(arr_cloud,info_dict).squeeze()
     else:
-        CM = da.where(mndwi[0,:,:]==0,False,False)
+        # Assuming mndwi is a two-dimensional array
+        if mndwi.ndim == 2:
+            CM = da.where(mndwi == 0, False, False)
+        else:
+            # Assuming da is the DataArray or an array with the same shape as mndwi
+            CM = da.where(mndwi[0, :, :] == 0, False, False)
     non_valid_mask = da.logical_or(CM,da.where(arr_image[0,:,:]==ref_src['nodata'],True,False))
-    predicted_mask = da.where((mndwi < ndvi) | ((mndwi < evi) & (evi < 0.1)), 1, 0)
+    Mask_less = da.where((mndwi < ndvi) | ((mndwi < evi) & (evi < 0.1)), 1, 0)
+    Mask_large = da.where((mndwi > ndvi) | ((mndwi > evi) & (evi < 0.1)), 1, 0)
+    mask_wop_raw = da.where(wop_raw>=50,1,0)
+    intersection_less = da.logical_and(Mask_less, mask_wop_raw)
+    intersection_large = da.logical_and(Mask_large, mask_wop_raw)
+    ilc = da.sum(intersection_less)
+    ill = da.sum(intersection_large)
+    if ill>=ilc:
+        predicted_mask = Mask_large
+    else:
+        predicted_mask = Mask_less
     ref_src.update(dtype=rasterio.uint8, nodata=255, count=1)
     predicted_mask_write = da.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
     predicted_mask_write = da.expand_dims(predicted_mask_write, axis=0)
