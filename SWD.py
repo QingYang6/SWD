@@ -139,6 +139,18 @@ def cloud_mask(in_ras,info_dict):
         cloud_mask = da.logical_or(*bool_exprs)
     return cloud_mask
 
+def NIR_Less(in_ras,info_dict=None):
+    info_dict = {'green': 1, 'swir': 3}
+    # quantile
+    # Calculate the 40th percentile of the SWIR data
+    flat_swir = in_ras[info_dict['swir'],:,:].flatten()
+    non_zero_flat_swir = flat_swir[flat_swir != 0]
+    quantile = np.percentile(non_zero_flat_swir, 30)
+    print(quantile.compute())
+    '''for Planet'''
+    NIRLESS = da.where(in_ras[info_dict['swir'],:,:] <= quantile,1,0)
+    return NIRLESS
+
 def MNDWI(in_ras,info_dict=None):
     info_dict = {'green': 1, 'swir': 3}
     '''for Planet'''
@@ -336,19 +348,8 @@ def SWD_RWC(input_optical,input_cloud,outputfile,info_dict,PW_threshold=50,geoex
         pbar.update(1)
 
         PW = da.where(wop_raw>=PW_threshold,1,0)#some how import, but the optimal is mysterious.
-        mndwi = MNDWI(arr_image)
-        ndvi = NDVI(arr_image)
-        evi = EVI(arr_image)
-        Mask_less = da.where((mndwi < ndvi) | ((mndwi < evi) & (evi < 0.1)), 1, 0)
-        Mask_large = da.where((mndwi > ndvi) | ((mndwi > evi) & (evi < 0.1)), 1, 0)
-        intersection_less = da.logical_and(Mask_less, PW)
-        intersection_large = da.logical_and(Mask_large, PW)
-        ilc = da.sum(intersection_less)
-        ill = da.sum(intersection_large)
-        if ill>=ilc:
-            PW = da.where(Mask_large==1,1,0)
-        else:
-            PW = da.where(Mask_less==1,1,0)
+        NIR_thless = NIR_Less(arr_image)
+        PW = da.where(NIR_thless==1,PW,0)
         num_PW = da.count_nonzero(PW==1).compute()
         if num_PW<=1:
             raise ValueError(f"Not enough persistent water in the image")
@@ -408,7 +409,7 @@ def RWC(input_optical,input_cloud,outputfile,info_dict,PW_threshold=75,geoextent
     ndvi = NDVI(arr_image)
     evi = EVI(arr_image)
     rc_wop = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getWO')
-    wop_raw = dask.compute(rc_wop)
+    wop_raw = dask.compute(rc_wop)[0]
     if input_cloud != 'None':
         arr_cloud = read_todask(data_cloud.ref)
     if input_cloud != 'None':
@@ -421,14 +422,15 @@ def RWC(input_optical,input_cloud,outputfile,info_dict,PW_threshold=75,geoextent
             # Assuming da is the DataArray or an array with the same shape as mndwi
             CM = da.where(mndwi[0, :, :] == 0, False, False)
     non_valid_mask = da.logical_or(CM,da.where(arr_image[0,:,:]==ref_src['nodata'],True,False))
-    Mask_less = da.where((mndwi < ndvi) | ((mndwi < evi) & (evi < 0.1)), 1, 0)
-    Mask_large = da.where((mndwi > ndvi) | ((mndwi > evi) & (evi < 0.1)), 1, 0)
+    Mask_less = da.where((mndwi < ndvi) | (mndwi < evi), 1, 0)
+    Mask_large = da.where((mndwi > ndvi) | (mndwi > evi), 1, 0)
     mask_wop_raw = da.where(wop_raw>=50,1,0)
+    mask_wop_raw = da.where(non_valid_mask, 0, mask_wop_raw)
     intersection_less = da.logical_and(Mask_less, mask_wop_raw)
     intersection_large = da.logical_and(Mask_large, mask_wop_raw)
     ilc = da.sum(intersection_less)
     ill = da.sum(intersection_large)
-    if ill>=ilc:
+    if ill >= ilc:
         predicted_mask = Mask_large
     else:
         predicted_mask = Mask_less
@@ -453,4 +455,4 @@ if __name__ == "__main__":
     if run_type == 'SWD' or run_type is None:
         SWD(*sys.argv[1:])
     else:
-        RWC(*sys.argv[1:])
+        SWD_RWC(*sys.argv[1:])
