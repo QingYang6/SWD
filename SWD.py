@@ -297,7 +297,6 @@ def quantile_based_th(in_ras, thPD=45):
     # return a quantile based threshold
     flat_arr = in_ras.flatten()
     quantile = np.percentile(flat_arr, thPD)
-    print(quantile.compute())
     '''tempory solution for Planet'''
     return quantile
 
@@ -343,7 +342,7 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,PW_threshold=25,geoextent
     # Apply the mask to each band using masked arrays
     masked_image = np.ma.masked_array(WI, mask=np.broadcast_to(non_valid_mask, WI.shape))
     print("Input band size: ", masked_image.shape)
-    print("Start implementing AdaI for initial samples")
+    print("Start sample cleaning for initial samples")
     # Calculate the AdaI threshold
     #I_vis = masked_image[0, :, :] + masked_image[1, :, :] + masked_image[2, :, :]
     #Threshold_vis = AdaI(I_vis, [], thProbSeeds=90)
