@@ -1,10 +1,32 @@
 import numpy as np
+import time
 import rasterio
 from rasterio.io import MemoryFile
 from rasterio.warp import reproject, Resampling, transform_bounds, calculate_default_transform
 from rasterio.merge import merge
 from rasterio.mask import mask
 from shapely.geometry import box
+
+class Timer(object):
+    def __init__(self, name=None):
+        self.name = name
+    def __enter__(self):
+        self.tstart = time.time()
+    def __exit__(self, type, value, traceback):
+        if self.name:
+            print('[%s]' % self.name,)
+        print('Elapsed: %s' % (time.time() - self.tstart))
+
+def tim(func):
+    # This function shows the execution time of 
+    # the function object passed
+    def wrap_func(*args, **kwargs):
+        t1 = time.time()
+        result = func(*args, **kwargs)
+        t2 = time.time()
+        print(f'Function {func.__name__!r} executed in {(t2-t1):.4f}s')
+        return result
+    return wrap_func
 
 def mergelist(rasters_to_merge):
     """
