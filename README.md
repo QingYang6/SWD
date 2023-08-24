@@ -1,45 +1,10 @@
-### Updated: Enable input of the persistent water threshold, 08/04/23.
-To specify the persistent water threshold, please refer to the following template:
-```
-python -u SWD.py /shared/stormcenter/Qing_Y/quick_functions/data/Planet_SWD/raw_data/Xinjiang_06042017_psscene_analytic_sr_udm2/files/2017-06-04_strip_531157_composite.tif \
-/shared/stormcenter/Qing_Y/quick_functions/data/Planet_SWD/raw_data/Xinjiang_06042017_psscene_analytic_sr_udm2/files/2017-06-04_strip_531157_composite_udm2.tif \
-/shared/stormcenter/Qing_Y/quick_functions/data/Planet_SWD/OUTPUT_define_PW/Xinjiang_06042017_psscene_analytic_sr_udm2/2017-06-04_strip_531157_composite_pw50.tif \
-"{'index':'ALL','cloud_band':[0],'cloud_value':[0]}" 50
-```
-The last number (fifth parameter) 50 is the persistent water threshold. The default value is 75 if not specified.
-
-The switch for RWC mode is push to the six parameter, like:
-
-```
-python -u SWD.py input_optical_bands input_cloud_mask output_water_mask parameters persistent_water_threshold RWC
-```
-
-### Updated: Adding new fix relative threshold based on [(mNDWI < NDVI or mNDWI < EVI) and (EVI < 0.1)], 08/03/23.
-To use the new fix relative threshold, please refer to the following template:
-```
-python -u SWD.py /Users/qyang/Downloads/RR_05042023_psscene_analytic_sr_udm_all/composite.tif \
-/Users/qyang/Downloads/RR_05042023_psscene_analytic_sr_udm_all/composite_udm2.tif ./OUTPUT/test_RWC_0504_all_RR.tif "{'index':'ALL','cloud_band':[0],'cloud_value':[0]}" RWC
-```
-
-RWC mode will export an additional mNDWI file with the extent of '_mndwi.tif' for reference. For Planet image, the mNDWI is calculated using the NIR and Green bands.
-
-Without the RWC tag in the end will use the SWD by default.
-
-
-Refernce:
-Zou, Zhenhua, Xiangming Xiao, Jinwei Dong, Yuanwei Qin, Russell B. Doughty, Michael A. Menarguez, Geli Zhang, and Jie Wang. 2018. “Divergent Trends of Open-Surface Water Body Area in the Contiguous United States from 1984 to 2016.” Proceedings of the National Academy of Sciences of the United States of America 115 (15): 3810–15.
-
-
-### Updated: Pulling land cover data from ESA WorldCover V100 2020, 05/04/23.
-### Updated: Improved ancillary data fecthing, 03/11/23.
-
-# SWD: Self-supervised Waterbody Detection
+# SWD: Self-supervised Waterbody Detection, v1.1.0
 Generate water mask from sattliete images using self-supervised classification.
 
 ## 1 Description
 1. The code automatically prepares ancillary data, including water occurrence and land cover.
-2. The kernel classification model is LogisticRegression.
-3. The training data is automatically sampled from the ancillary data.
+2. The kernel classification model is gaussian mixture model(GMM).
+3. The training data is automatically sampled from the ancillary data. Now with quantile based smaple cleanning.
 
 ## 2 Requirements
 ```
