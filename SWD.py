@@ -1,8 +1,11 @@
 """
-Generate water mask based on sel-supervised classification.
-    1.The code automatically prepares ancillary data, including water occurrence and land cover.
-    2.The kernel classification model is gaussian mixture model.
-    3.The sample for training the model is automatically pulling from ancillary data.
+SWD: Self-supervised Waterbody Detection, v1.1.0
+Create water masks from satellite images using self-supervised classification.
+The current version is specifically designed for Planet data.
+
+    1. The code automatically pulls ancillary data, i.e., ESA water occurrence.
+    2. The initial sample is automatically generated based on persistent water occurrence and cleaned by global adaptive thresholding with a split-based approach.
+    3. The kernel classification model is gaussian mixture model(GMM).
 Created by Qing Yang, email: yang2473@uwm.edu
 Usage:
 python -u ./SWD.py input_image_path cloud_mask_path output_file_path parameters
@@ -18,27 +21,20 @@ Args:
     If there are multiple band represent invalid area, could use something like 'cloud_band':[1,2,3...],'cloud_value':[[1,2,3,4],2,5...]
 """
 import os
+import multiprocessing
 import glob
 import sys
 import ast
 import rasterio
 from rasterio.warp import reproject, Resampling, transform_bounds, calculate_default_transform
 import numpy as np
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-from scipy import ndimage
 from utils import *
 from ancillarydata import *
 import dask
 import dask.array as da
 from scipy.stats import norm
 from sklearn.mixture import GaussianMixture
-from sklearn.ensemble import IsolationForest
-from dask_ml.wrappers import ParallelPostFit
-import argparse
-import json
-from scipy.stats import wasserstein_distance
-from dask import delayed, compute
+from concurrent.futures import ProcessPoolExecutor
 from itertools import product
 import numpy as np
 from AdaI import *
@@ -176,8 +172,10 @@ def ALL(in_ras,info_dict):
     (in_ras[info_dict['green'],:,:]+in_ras[info_dict['nir'],:,:])
     NDVI = (in_ras[info_dict['nir'],:,:]-in_ras[info_dict['red'],:,:]) / \
     (in_ras[info_dict['nir'],:,:]+in_ras[info_dict['red'],:,:])
-    in_ras = da.concatenate((in_ras, NDWI[np.newaxis, :, :], NDVI[np.newaxis, :, :]), axis=0)
-    return in_ras
+    out_ras = da.concatenate((in_ras, NDWI[np.newaxis, :, :], NDVI[np.newaxis, :, :]), axis=0)
+    #out_ras = da.concatenate((R_ratio[np.newaxis, :, :], G_ratio[np.newaxis, :, :], B_ratio[np.newaxis, :, :],\
+    #    NDWI[np.newaxis, :, :], NDVI[np.newaxis, :, :]), axis=0)
+    return out_ras
 
 def get_waterindex(in_bands, info_dict):
     water_index = globals()[info_dict['index']](in_bands,info_dict)
@@ -205,7 +203,6 @@ def write_output(out_file, result, profile):
 
 @tim
 def get_PDF_Th(Th, gmm):
-    n_components, n_features = gmm.means_.shape
     # Weighted average of the means
     marginal_means = np.average(gmm.means_, weights=gmm.weights_, axis=0)
     # Check if the covariances are in the 'full' or 'diagonal' format
@@ -228,7 +225,7 @@ def fit_one_gmm(samples, n_components):
 @tim
 def fit_gmm_serial(samples):
     # Initialize some parameters
-    max_components = 15
+    max_components = 5
     lowest_bic = np.inf
     # Initial guess
     best_gmm = None
@@ -253,55 +250,59 @@ def single_GMM(WI, PW, num_PW):
     arr_PW_indices = np.array(PW_indices)
     In_features = WI.compute()[:,arr_PW_indices[:, 0], arr_PW_indices[:, 1]].T
     predict_features = WI.compute().reshape((WI.shape[0], -1)).T
-    # Assuming WI has a shape (channels, rows, cols)
-    _, num_rows, num_cols = WI.shape
-    # Convert PW_indices to 1D indices
-    In_indices_1D = arr_PW_indices[:, 0] * num_cols + arr_PW_indices[:, 1]
-    # Generate a boolean index array for predict_features
-    In_indices = np.zeros(predict_features.shape[0], dtype=bool)
-    In_indices[In_indices_1D] = True
     # Fit the self-supervised GMM
     initial_gmm = fit_gmm_serial(In_features)  # Assume fitgmm function exists
-    ini_PDF = get_PDF_Th(0.80, initial_gmm) # Actually, the CDF threshold 0.8 should be fine-tuned.
+    ini_PDF = get_PDF_Th(0.95, initial_gmm) # Actually, the CDF threshold 0.8 should be fine-tuned.
     ini_prediction = initial_gmm.score_samples(predict_features)
-    predict_initial = (ini_prediction > ini_PDF).astype(int)
+    print(ini_prediction.shape)
+    predict_initial = np.where(ini_prediction > ini_PDF, 1, 0)
     return predict_initial
+
+def process_chunk(chunk, gmm, threshold):
+    prediction = gmm.score_samples(chunk)
+    return np.where(prediction > threshold, 1, 0)
+
+def single_GMM_parallel(WI, PW, num_PW, chunk_size=4096):
+    num_workers = int(os.environ.get('SLURM_CPUS_PER_TASK', multiprocessing.cpu_count()))
+    # Step 1: Initial GMM Fit
+    PW_indices = get_random_pixels(PW.compute(), [1], num_PW)
+    arr_PW_indices = np.array(PW_indices)
+    In_features = WI.compute()[:, arr_PW_indices[:, 0], arr_PW_indices[:, 1]].T
+    predict_features = WI.compute().reshape((WI.shape[0], -1)).T
+    
+    # Fit the self-supervised GMM
+    initial_gmm = fit_gmm_serial(In_features)  # Assume fitgmm function exists
+    ini_PDF = get_PDF_Th(0.87, initial_gmm)
+    
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        results = []
+        for i in range(0, predict_features.shape[0], chunk_size):
+            chunk = predict_features[i:i+chunk_size]
+            results.append(executor.submit(process_chunk, chunk, initial_gmm, ini_PDF))
+        
+        combined_results = np.concatenate([result.result() for result in results])
+    
+    return combined_results
 
 def write_predict_nparray(outputfile, predictions,non_valid_mask, ref_src, shapes):
     # Reshape the predicted target variable to match the shape of the `values_arr` mask
+    #with dask.config.set(**{'array.slicing.split_large_chunks': False}):
     predicted_mask = np.reshape(predictions, shapes)
     ref_src.update(dtype=rasterio.uint8, nodata=255, count=1)
-    predicted_mask_write = da.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
+    predicted_mask_write = np.where(non_valid_mask, ref_src['nodata'], predicted_mask).astype(ref_src['dtype'])
+    print(f"Writing output to {outputfile}")
     write_output(outputfile, predicted_mask_write, ref_src)
 
-def isolateF_positive(WI, PW, num_PW):
-    PW_indices = get_random_pixels(PW.compute(), [1], num_PW)
-    Total_Sample_indices =  PW_indices
-    In_features = WI.compute()[:,np.array(Total_Sample_indices)[:, 0], np.array(Total_Sample_indices)[:, 1]].T
-    In_features = da.from_array(In_features,chunks='auto')
-    # Train the isolation forest
-    clf = ParallelPostFit(IsolationForest(contamination=0.1), scoring="accuracy")
-    clf.fit(In_features)
-    targets = da.ones(len(PW_indices))
-    print(f'Fitting score: {clf.score(In_features,targets)}')
-    # Predict the scores (1 for inliers and -1 for outliers)
-    predict_features = da.reshape(WI,(WI.shape[0],-1)).T
-    preds = clf.predict(predict_features)
-    preds.rechunk((preds.shape[0], 8192))
-    print(preds.shape)
-    predictions = (preds == 1).astype(np.int)
-    return predictions
-
-def quantile_based_th(in_ras, thPD=45):
+def quantile_based_th(in_ras,non_valid_mask,thPD=30):
     # thPD: quantile threshold for sample cleaning
     # return a quantile based threshold
-    flat_arr = in_ras.flatten()
+    cal_ras = in_ras[non_valid_mask != True]
+    flat_arr = cal_ras.flatten()
     quantile = np.percentile(flat_arr, thPD)
     '''tempory solution for Planet'''
-    return quantile
+    return quantile.compute()
 
-def SWD(input_optical,input_cloud,outputfile,info_dict,PW_threshold=25,geoextent=None): 
-    geoextent=None
+def SWD(input_optical,input_cloud,outputfile,info_dict={'index':'ALL','cloud_band':[0],'cloud_value':[0]},PW_threshold=25,geoextent=None): 
     if isinstance(PW_threshold, str):
         PW_threshold = int(PW_threshold)
     if isinstance(info_dict, str):
@@ -321,8 +322,9 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,PW_threshold=25,geoextent
     #prepare ancillary data
     print(f'Preparing ancillary data')
     rc_wop = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getWO')
-    rc_gplcc = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getGPLCC')
-    wop_raw, LCC_raw = dask.compute(rc_wop, rc_gplcc)
+    #rc_gplcc = dask.delayed(get_ancillary)(bounds_wgs84,ref_src, 'getGPLCC')
+    #wop_raw, LCC_raw = dask.compute(rc_wop, rc_gplcc)
+    wop_raw = dask.compute(rc_wop)
     #prepare sample
     arr_image = read_todask(data_image.ref)
     if input_cloud != 'None':
@@ -336,45 +338,38 @@ def SWD(input_optical,input_cloud,outputfile,info_dict,PW_threshold=25,geoextent
         CM = da.where(WI[0,:,:]==0,False,False)
     non_valid_mask = da.logical_or(CM,da.where(arr_image[0,:,:]==ref_src['nodata'],True,False))
 
-    LCC_raw = da.where(non_valid_mask,0,LCC_raw)
+    #LCC_raw = da.where(non_valid_mask,0,LCC_raw)
     wop_raw = da.where(non_valid_mask,0,wop_raw)
 
     # Apply the mask to each band using masked arrays
-    masked_image = np.ma.masked_array(WI, mask=np.broadcast_to(non_valid_mask, WI.shape))
-    print("Input band size: ", masked_image.shape)
-    print("Start sample cleaning for initial samples")
-    # Calculate the AdaI threshold
-    #I_vis = masked_image[0, :, :] + masked_image[1, :, :] + masked_image[2, :, :]
-    #Threshold_vis = AdaI(I_vis, [], thProbSeeds=90)
-    #I_nir = masked_image[3, :, :]
-    #Threshold_nir = AdaI(I_nir, [], thProbSeeds=90)
-    I_negative_ndwi = masked_image[4, :, :]
-    #Threshold_negative_ndwi = AdaI_PW_adj(I_negative_ndwi, wop_raw, thProbSeeds=90)
-    Threshold_negative_ndwi = quantile_based_th(I_negative_ndwi)
-    I_ndvi = masked_image[5, :, :]
-    #Threshold_ndvi = AdaI_PW_adj(I_ndvi, wop_raw, thProbSeeds=90)
-    Threshold_ndvi = quantile_based_th(I_ndvi)
+    #masked_image = np.ma.masked_array(WI, mask=np.broadcast_to(non_valid_mask, WI.shape))
+    print("Image size:", WI.shape[1:])
+    print("Start sample cleaning...")
+    # NWDI and NDVI
+    I_negative_ndwi = WI[-2, :, :]
+    Threshold_negative_ndwi = SBA(I_negative_ndwi,non_valid_mask)
+    I_ndvi = WI[-1, :, :]
+    Threshold_ndvi = SBA(I_ndvi,non_valid_mask)
     
-    #print(f"Threshold_vis: {Threshold_vis}", f"Threshold_nir: {Threshold_nir}", f"Threshold_swir: {Threshold_swir}", f"Threshold_ndvi: {Threshold_ndvi}")
-    print(f"Threshold_swir: {Threshold_negative_ndwi}", f"Threshold_ndvi: {Threshold_ndvi}")
+    print(f"Histogram_upper_bound: negtive_NDWI {Threshold_negative_ndwi}", f"NDVI {Threshold_ndvi}")
     
-    #NIR_thless = np.where( (I_vis < Threshold_vis) | (I_nir < Threshold_nir) | (I_swir < Threshold_swir) | (I_ndvi < Threshold_ndvi), 1, 0)
-    NIR_thless = np.where( (I_negative_ndwi <= Threshold_negative_ndwi) | (I_ndvi <= Threshold_ndvi), 1, 0)
+    NIR_thless = da.where( (I_negative_ndwi <= Threshold_negative_ndwi) | (I_ndvi <= Threshold_ndvi), 1, 0)
     PW = da.where(wop_raw>=PW_threshold,1,0)
-    PW = da.where(NIR_thless==1, PW, 0)
+    PW = da.where(NIR_thless==1, PW, 0).squeeze()
     num_PW = da.count_nonzero(PW==1).compute()
     if num_PW<=1:
-        raise ValueError(f"Not enough persistent water in the image")
+        raise ValueError(f"Not enough persistent water in the image, try enlarge the input spatial domain")
     
-    num_PW = max(3e5, int(num_PW*0.3))
+    num_PW = int(num_PW)
+    print(f"Number of training samples: {num_PW}")
     WI = da.concatenate((I_negative_ndwi[np.newaxis, :, :], I_ndvi[np.newaxis, :, :]), axis=0)
+    
     WI = da.where(non_valid_mask, 0, WI)
+    print("Input feature size: ", WI.shape)
     
-    prediction = single_GMM(WI, PW, num_PW)
-    
+    prediction = single_GMM_parallel(WI, PW, num_PW)
     shapes = (1,WI.shape[1],WI.shape[2])
     write_predict_nparray(outputfile, prediction, non_valid_mask, ref_src, shapes)
   
 if __name__ == "__main__":
-    # Get the number of input arguments (excluding the script name)
     SWD(*sys.argv[1:])
