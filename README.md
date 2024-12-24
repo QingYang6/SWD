@@ -1,9 +1,8 @@
 # SWD: Self-supervised Waterbody Detection
 
 ## 1 Theory
-SWD is a framework that transforms supervised classification into an automated tool for remote sensing-based surface water detection.
+SWD is a framework that transforms supervised classification into an automated tool for remote sensing-based surface water detection(Figure 1).
 ![SWD Theory](./SWD_Theory.png)
-
 **Figure 1. SWD framework**
 
 Paper regarding the SWD application on multi-source remote sensing flood mapping system: https://ieeexplore.ieee.org/document/10641791.
