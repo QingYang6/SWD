@@ -2,7 +2,7 @@
 
 ## 1 Theory
 SWD is a framework that transforms supervised classification into an automated tool for remote sensing-based surface water detection.
-[`SWD Theory`](./SWD_Theory.png)
+![SWD Theory](./SWD_Theory.png)
 
 Paper regarding the SWD application on multi-source remote sensing flood mapping system: https://ieeexplore.ieee.org/document/10641791.
 
