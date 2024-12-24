@@ -4,6 +4,8 @@
 SWD is a framework that transforms supervised classification into an automated tool for remote sensing-based surface water detection.
 ![SWD Theory](./SWD_Theory.png)
 
+**Figure 1. SWD framework**
+
 Paper regarding the SWD application on multi-source remote sensing flood mapping system: https://ieeexplore.ieee.org/document/10641791.
 
 ## 2 Code for application on PlanetScope images, v1.1.0.
