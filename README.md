@@ -1,19 +1,24 @@
-# SWD: Self-supervised Waterbody Detection, v1.1.0
-Create water masks from satellite images using self-supervised classification.
+# SWD: Self-supervised Waterbody Detection
 
-The current version is specifically designed for Planet data.https://www.planet.com/ 
+## 1 Theory
+SWD is a framework that transforms supervised classification into an automated tool for remote sensing-based surface water detection.
+[`SWD Theory`](./SWD_Theory.png)
 
-## 1 Description
+Paper regarding the SWD application on multi-source remote sensing flood mapping system: https://ieeexplore.ieee.org/document/10641791.
+
+## 2 Code for application on PlanetScope images, v1.1.0.
+One example of SWD practical code for floodwater detection using PlanetScope image.
+Input PlanetScope data, https://www.planet.com/ 
 1. The code automatically pulls ancillary data, i.e., ESA water occurrence.
 2. The initial sample is automatically generated based on persistent water occurrence and cleaned by global adaptive thresholding with a split-based approach.
 3. The kernel classification model is gaussian mixture model(GMM).
 
-## 2 Requirements
+## 3 Requirements
 ```
 conda install gdal shapely rasterio scipy dask scikit-learn scikit-image jupyter -c conda-forge
 ```
 
-## 3 Usage
+## 4 Usage
 Clone or download this repository then:
 ### Option 1: run in terminal
 ```
@@ -40,4 +45,3 @@ from SWD import *
 
 SWD(input_4bands_image_path,input_udm2_path,output_file_path)
 ```
-
