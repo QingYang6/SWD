@@ -12,7 +12,7 @@ One example of SWD practical code for floodwater detection using PlanetScope ima
 Input PlanetScope data, https://www.planet.com/ 
 1. The code automatically pulls ancillary data, i.e., ESA water occurrence.
 2. The initial sample is automatically generated based on persistent water occurrence and cleaned by global adaptive thresholding with a split-based approach.
-3. The kernel classification model is gaussian mixture model(GMM).
+3. The pixel classification model is gaussian mixture model(GMM).
 
 ## 3 Requirements
 ```
